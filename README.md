@@ -15,22 +15,49 @@
 
 ## 架构总览
 
-```text
-插入引用（Ctrl+Alt+K → opencodeBridge.insertFileReference）
+**插入引用（`Ctrl+Alt+K` → `opencodeBridge.insertFileReference`）**
 
-   VS Code 扩展 ──① POST /append─────▶ opencode TUI 插件 ──▶ 写入 composer
-                ──② terminal.sendText─▶ 活跃终端
-                ──③ clipboard.write───▶ 剪贴板
-   （①②③ 为优先级链，任一成功即停止并回退）
+```mermaid
+flowchart TD
+    Editor["VS Code 编辑器<br/>选中代码后按 Ctrl+Alt+K（macOS 为 Cmd+Alt+K）"]
+    Cmd["命令 opencodeBridge.insertFileReference<br/>生成引用：无选中 @文件 / 单行 @文件#L12 / 多行 @文件#L12-30"]
+    Guard{"可发送？<br/>有活动编辑器 · scheme 为 file · 位于 workspace 内"}
+    Warn["仅提示：opencode-bridge: no active editor / file not in workspace"]
+    P1{"① 选中文件位于某个 TUI 会话目录内？"}
+    Append["POST /append（127.0.0.1:TUI端口，2 秒超时）"]
+    Tui["opencode TUI 插件<br/>写入 composer"]
+    Ok1["提示：sent to opencode TUI"]
+    P2{"② 存在活跃终端？"}
+    Term["terminal.sendText + terminal.show"]
+    Clip["③ clipboard.writeText"]
+    Ok3["提示：copied to clipboard"]
+    Editor --> Cmd --> Guard
+    Guard -- "否" --> Warn
+    Guard -- "是" --> P1
+    P1 -- "否（目录不匹配或注入失败）" --> P2
+    P1 -- "是" --> Append --> Tui --> Ok1
+    P2 -- "是" --> Term
+    P2 -- "否" --> Clip --> Ok3
+```
 
-读取编辑器状态（MCP）
+**读取编辑器状态（MCP）**
 
-   opencode ──stdio · NDJSON JSON-RPC──▶ mcp-shim.js ──POST /rpc──▶ VS Code 扩展
-
-发现机制：%USERPROFILE%\.opencode\ide\ 下的两类锁文件
-
-   <pid>.json        扩展写出，mcp-shim 读取（port + authToken）
-   tui-<pid>.json    TUI 插件写出，扩展读取（directory + port）
+```mermaid
+flowchart LR
+    subgraph OCP["opencode 进程"]
+        OC["opencode 服务端"]
+        Shim["mcp-shim.js<br/>stdio · NDJSON JSON-RPC"]
+    end
+    subgraph VSC["VS Code 进程"]
+        Ext["扩展 HTTP 服务<br/>POST /rpc · Bearer 鉴权"]
+        State["编辑器状态<br/>选区 / 打开的文件 / 工作区"]
+    end
+    Locks["锁文件发现<br/>%USERPROFILE%\.opencode\ide\<br/>&lt;pid&gt;.json 扩展写 · tui-&lt;pid&gt;.json 插件写"]
+    OC -- "initialize / tools/list / tools/call" --> Shim
+    Shim -- "Authorization: Bearer &lt;authToken&gt;" --> Ext
+    Ext --> State
+    Locks -. "mcp-shim 读 port + authToken" .-> Shim
+    Locks -. "扩展读 directory + port" .-> Ext
 ```
 
 ## 目录结构
