@@ -10,6 +10,7 @@
 //   2. renderer fallback                  -- TextareaRenderable direct write
 //
 // No npm dependencies: node builtins + Bun globals only. Plain TS, no JSX.
+// Type-checked by plugins/tui-append-http/tsconfig.json (`npm run check`).
 
 import { Plugin } from "@opencode/plugin/tui";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
@@ -18,32 +19,66 @@ import path from "node:path";
 
 const LOCK_DIR = path.join(os.homedir(), ".opencode", "ide");
 
+/** Instance lock file consumed by the VS Code extension (`tui-<pid>.json`). */
+interface TuiAppendLockFile {
+  pid: number;
+  port: number;
+  directory: string;
+  startedAt: number;
+}
+
+/** The @opentui/core TextareaRenderable subset used for prompt injection. */
+interface ComposerNode {
+  insertText(text: string): void;
+  readonly plainText: string;
+  readonly isDestroyed?: boolean;
+  getClipboardText?(): string;
+  getLayoutNode?(): { markDirty?(): void } | undefined;
+  gotoBufferEnd?(): void;
+}
+
+/** Renderer subset the injection path depends on. */
+interface RendererLike {
+  readonly root?: unknown;
+  readonly currentFocusedEditor?: unknown;
+  requestRender?(): void;
+}
+
+/** Node carrying the 2.0.11 clipboard hook used to disambiguate the composer. */
+interface ClipboardAware {
+  getClipboardText(): string;
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
 // The composer is a @opentui/core TextareaRenderable; it has no id.
-function isComposer(node: any): boolean {
+function isComposer(node: unknown): node is ComposerNode {
   return (
-    !!node &&
-    typeof node.insertText === "function" &&
-    typeof node.plainText === "string" &&
-    node.isDestroyed !== true
+    isObject(node) &&
+    typeof node["insertText"] === "function" &&
+    typeof node["plainText"] === "string" &&
+    node["isDestroyed"] !== true
   );
 }
 
 // 2.0.11 exposes an own getClipboardText() on the composer ref; use it as the
 // discriminating feature when several textareas are alive.
-function hasClipboardHook(node: any): boolean {
-  return typeof node?.getClipboardText === "function";
+function hasClipboardHook(node: unknown): node is ClipboardAware {
+  return isObject(node) && typeof node["getClipboardText"] === "function";
 }
 
-function findComposer(renderer: any): any | undefined {
+function findComposer(renderer: RendererLike | undefined): ComposerNode | undefined {
   const focused = renderer?.currentFocusedEditor;
   if (isComposer(focused) && hasClipboardHook(focused)) return focused;
 
   const root = renderer?.root;
   if (!root) return undefined;
 
-  const queue: any[] = [root];
-  const seen = new Set<any>();
-  let fallback: any | undefined;
+  const queue: unknown[] = [root];
+  const seen = new Set<unknown>();
+  let fallback: ComposerNode | undefined;
   while (queue.length > 0) {
     const node = queue.shift();
     if (!node || seen.has(node)) continue;
@@ -56,7 +91,10 @@ function findComposer(renderer: any): any | undefined {
 
     let children: unknown;
     try {
-      children = typeof node.getChildren === "function" ? node.getChildren() : undefined;
+      children =
+        isObject(node) && typeof node["getChildren"] === "function"
+          ? node["getChildren"]()
+          : undefined;
     } catch {
       children = undefined;
     }
@@ -67,9 +105,9 @@ function findComposer(renderer: any): any | undefined {
   return fallback;
 }
 
-function injectViaRenderer(renderer: any, text: string): boolean {
+function injectViaRenderer(renderer: RendererLike | undefined, text: string): boolean {
   const composer = findComposer(renderer);
-  if (!composer) return false;
+  if (composer === undefined) return false;
 
   let inserted = false;
   try {
@@ -101,21 +139,21 @@ export default Plugin.define({
     const server = Bun.serve({
       hostname: "127.0.0.1",
       port: 0,
-      async fetch(req) {
-        const url = new URL(req.url);
+      async fetch(request: Request): Promise<Response> {
+        const url = new URL(request.url);
 
-        if (req.method === "GET" && url.pathname === "/health") {
+        if (request.method === "GET" && url.pathname === "/health") {
           return Response.json({ ok: true, pid: process.pid, port, directory });
         }
 
-        if (req.method !== "POST" || url.pathname !== "/append") {
+        if (request.method !== "POST" || url.pathname !== "/append") {
           return Response.json({ ok: false, error: "not found" }, { status: 404 });
         }
 
         let text: unknown;
         try {
-          const body: any = await req.json();
-          text = body?.text;
+          const body: unknown = await request.json();
+          text = isObject(body) ? body["text"] : undefined;
         } catch {
           text = undefined;
         }
@@ -143,26 +181,19 @@ export default Plugin.define({
     const lockFile = path.join(LOCK_DIR, `tui-${process.pid}.json`);
     try {
       mkdirSync(LOCK_DIR, { recursive: true });
-      writeFileSync(
-        lockFile,
-        JSON.stringify(
-          {
-            pid: process.pid,
-            port: server.port,
-            directory,
-            startedAt: Date.now(),
-          },
-          null,
-          2,
-        ),
-        "utf8",
-      );
+      const payload: TuiAppendLockFile = {
+        pid: process.pid,
+        port: server.port,
+        directory,
+        startedAt: Date.now(),
+      };
+      writeFileSync(lockFile, JSON.stringify(payload, null, 2), "utf8");
     } catch (err) {
       console.error("[tui-append-http] failed to write lock file:", err);
     }
 
     try {
-      context.ui.toast.show({
+      context.ui?.toast?.show({
         variant: "success",
         title: "append-http",
         message: "listening on 127.0.0.1:" + server.port,

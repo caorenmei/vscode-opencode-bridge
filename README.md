@@ -1,12 +1,14 @@
 # vscode-opencode-bridge
 
-极简的 VS Code ↔ opencode 桥接扩展与 MCP 服务器，**零 npm 依赖**，仅使用 Node 内置模块。
+极简的 VS Code ↔ opencode 桥接扩展与 MCP 服务器，**运行期零依赖**（仅 Node 内置模块）。
+
+源码使用 TypeScript（`src/`），由 `tsc` 编译为仓库根目录的 `extension.js` / `mcp-shim.js`——VS Code 与 opencode 只加载编译产物，因此 junction、`package.json` 的 `main`、`opencode.json` 的 MCP 命令路径全部无需变更。
 
 ## 项目简介
 
 本扩展替代 opencode 官方 VS Code 扩展，承担两件事：
 
-1. **编辑器侧（`extension.js`）**
+1. **编辑器侧（源码 `src/extension.ts` → 产物 `extension.js`）**
    - `Ctrl+Alt+K`（macOS 为 `Cmd+Alt+K`）插入当前文件的引用：
      - 空选区 → `@相对路径`
      - 单行选区 → `@相对路径#L12`
@@ -15,7 +17,7 @@
    - 若选中文件位于某个运行中的 opencode TUI 会话目录内（`tui-<pid>.json` 锁文件），则优先**跨终端直连注入** TUI 输入框（见下文「TUI 直连注入」）；目录不匹配或注入失败才回退到活跃终端 / 剪贴板。
    - 扩展激活时（`onStartupFinished`）在 `127.0.0.1` 的随机端口启动一个仅监听本机的 HTTP 服务（`POST /rpc`，Bearer 令牌鉴权），并把连接信息写入锁文件 `%USERPROFILE%\.opencode\ide\<pid>.json`。
 
-2. **MCP 侧（`mcp-shim.js`）**
+2. **MCP 侧（源码 `src/mcp-shim.ts` → 产物 `mcp-shim.js`）**
    - 独立的 stdio MCP 服务器（NDJSON 行分隔的 JSON-RPC，非 LSP 的 `Content-Length` 分帧）。
    - 扫描 `%USERPROFILE%\.opencode\ide\*.json`，过滤已死进程，优先匹配当前工作目录，其次取最新启动的实例，然后经 HTTP 转发到 VS Code 扩展。
    - 向 opencode 暴露三个工具：
@@ -28,15 +30,24 @@
 
 ```
 vscode-opencode-bridge/
-├── package.json                       # 扩展清单（命令、快捷键、激活事件、engines）
-├── extension.js                       # VS Code 扩展主体：HTTP 桥 + 命令实现
-├── mcp-shim.js                        # stdio MCP 服务器，转发到扩展的 HTTP 服务
+├── src/
+│   ├── extension.ts                   # VS Code 扩展源码：HTTP 桥 + 命令实现
+│   └── mcp-shim.ts                    # stdio MCP 服务器源码
 ├── plugins/
 │   └── tui-append-http/
-│       └── tui.ts                     # opencode 2.0.11 TUI 插件：接收注入请求并写入 composer
+│       ├── tui.ts                     # opencode 2.0.11 TUI 插件（TS 源码直跑，不参与 tsc 构建）
+│       ├── tsconfig.json              # 插件独立类型检查配置（noEmit）
+│       └── types/                     # 宿主 API 的 ambient 声明（不参与运行）
+├── tsconfig.json                      # 根 tsc 配置（strict，输出到仓库根）
+├── package.json                       # 扩展清单（命令、快捷键、激活事件、engines、scripts、devDependencies）
+├── extension.js                       # 【构建产物】src/extension.ts 编译结果（gitignore）
+├── mcp-shim.js                        # 【构建产物】src/mcp-shim.ts 编译结果（gitignore）
 ├── README.md
+├── package-lock.json
 └── .gitignore
 ```
+
+> 修改 `src/` 或 `plugins/` 下的源码后必须 `npm run build`，否则加载的仍是旧产物。
 
 运行时产物（不纳入版本管理）：
 
@@ -44,6 +55,30 @@ vscode-opencode-bridge/
 %USERPROFILE%\.opencode\ide\<pid>.json        # 扩展写出的实例锁文件（含 port / authToken / workspaceFolders）
 %USERPROFILE%\.opencode\ide\tui-<pid>.json    # TUI 插件写出的实例锁文件（含 port / directory / startedAt）
 ```
+
+## 开发
+
+克隆后先初始化（安装 devDependencies 并编译出 `extension.js` / `mcp-shim.js`）：
+
+```bash
+npm install
+npm run build
+```
+
+常用脚本：
+
+| 命令 | 作用 |
+| --- | --- |
+| `npm run build` | 按根 `tsconfig.json` 编译 `src/` → 仓库根 `extension.js` / `mcp-shim.js` |
+| `npm run watch` | 同上，watch 模式 |
+| `npm run check` | 类型检查：`src/` 与 `plugins/tui-append-http/`（均 `--noEmit`，strict 全开） |
+
+约定：
+
+- `src/` 采用 strict TypeScript（`noUncheckedIndexedAccess` / `noImplicitReturns` / `noUnusedLocals` 等全开），零隐式 any。
+- 编译产物必须落在仓库根，才能让 `package.json` 的 `main`、junction 路径与 `opencode.json` 的 MCP 命令路径保持不变。
+- `plugins/tui-append-http/tui.ts` 由 opencode 的 Bun 宿主**直接加载 TS 源码**，不参与 `npm run build`；它拥有独立的 `tsconfig.json` 与 `types/*.d.ts`（对 `@opencode/plugin/tui` 与 Bun 全局的 ambient 声明），仅供 `npm run check` 使用。
+- `extension.js` / `mcp-shim.js` 是构建产物、不进版本库（见 `.gitignore`），请勿手工编辑。
 
 ## 安装方式（junction 方案）
 
@@ -61,10 +96,11 @@ mklink /J "C:\Users\caoren\.vscode\extensions\local.opencode-bridge-0.0.1" "C:\U
 
 ## 更新流程
 
-1. 直接修改仓库中的源码（`extension.js` / `mcp-shim.js` / `package.json`）。
-2. 在 VS Code 中执行 `Developer: Reload Window` 即可生效——扩展目录通过 junction 指向仓库，无需重新拷贝文件。
-3. `mcp-shim.js` 由 opencode 每次启动 MCP 服务器时读取，重启 opencode 会话即可加载新版本。
-4. 若 VS Code 的扩展登记损坏（例如 `code --list-extensions` 不再列出该扩展，或扩展面板报错），按下面步骤重建：
+1. 直接修改仓库中的源码（`src/extension.ts` / `src/mcp-shim.ts` / `package.json`）。
+2. 执行 `npm run build` 重新生成 `extension.js` / `mcp-shim.js`。
+3. 在 VS Code 中执行 `Developer: Reload Window` 即可生效——扩展目录通过 junction 指向仓库，无需重新拷贝文件。
+4. `mcp-shim.js` 由 opencode 每次启动 MCP 服务器时读取，重启 opencode 会话即可加载新版本。
+5. 若 VS Code 的扩展登记损坏（例如 `code --list-extensions` 不再列出该扩展，或扩展面板报错），按下面步骤重建：
 
 ```cmd
 rmdir "C:\Users\caoren\.vscode\extensions\local.opencode-bridge-0.0.1"

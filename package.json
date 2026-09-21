@@ -25,5 +25,15 @@
         "mac": "cmd+alt+k"
       }
     ]
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "watch": "tsc -w -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit && tsc -p plugins/tui-append-http/tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.6.0"
   }
 }
