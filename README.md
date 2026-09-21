@@ -12,6 +12,7 @@
      - 单行选区 → `@相对路径#L12`
      - 多行选区 → `@相对路径#L12-30`
    - 若存在活动终端，引用直接发送到该终端；否则写入剪贴板并弹出提示。
+   - 若检测到运行中的 opencode TUI 实例（`tui-<pid>.json` 锁文件），则优先**跨终端直连注入** TUI 输入框（见下文「TUI 直连注入」），失败才回退到终端 / 剪贴板。
    - 扩展激活时（`onStartupFinished`）在 `127.0.0.1` 的随机端口启动一个仅监听本机的 HTTP 服务（`POST /rpc`，Bearer 令牌鉴权），并把连接信息写入锁文件 `%USERPROFILE%\.opencode\ide\<pid>.json`。
 
 2. **MCP 侧（`mcp-shim.js`）**
@@ -27,9 +28,11 @@
 
 ```
 vscode-opencode-bridge/
-├── package.json     # 扩展清单（命令、快捷键、激活事件、engines）
-├── extension.js     # VS Code 扩展主体：HTTP 桥 + 命令实现
-├── mcp-shim.js      # stdio MCP 服务器，转发到扩展的 HTTP 服务
+├── package.json                       # 扩展清单（命令、快捷键、激活事件、engines）
+├── extension.js                       # VS Code 扩展主体：HTTP 桥 + 命令实现
+├── mcp-shim.js                        # stdio MCP 服务器，转发到扩展的 HTTP 服务
+├── plugins/
+│   └── tui-append-http.tsx            # opencode v2 TUI 插件：接收注入请求并写入 composer
 ├── README.md
 └── .gitignore
 ```
@@ -37,7 +40,8 @@ vscode-opencode-bridge/
 运行时产物（不纳入版本管理）：
 
 ```
-%USERPROFILE%\.opencode\ide\<pid>.json   # 扩展写出的实例锁文件（含 port / authToken / workspaceFolders）
+%USERPROFILE%\.opencode\ide\<pid>.json        # 扩展写出的实例锁文件（含 port / authToken / workspaceFolders）
+%USERPROFILE%\.opencode\ide\tui-<pid>.json    # TUI 插件写出的实例锁文件（含 port / directory / startedAt）
 ```
 
 ## 安装方式（junction 方案）
@@ -67,6 +71,52 @@ mklink /J "C:\Users\caoren\.vscode\extensions\local.opencode-bridge-0.0.1" "C:\U
 ```
 
 注意：删除 junction 必须用 `rmdir`（或 `Remove-Item` 后确认），**不要**用会递归删除目标内容的命令，以免误删仓库文件。
+
+## TUI 直连注入
+
+让 `Ctrl+Alt+K` 把文件引用注入**任意终端里运行的 opencode TUI 输入框**，不再依赖 VS Code 集成终端或剪贴板兜底。
+
+**架构（一句话）**：
+
+```
+VS Code 扩展 --POST 127.0.0.1:<port>/append--> TUI 插件 (tui-append-http.tsx)
+             --> api.client.tui.appendPrompt()（官方链路）
+                 失败则 renderer 兜底：定位 TextareaRenderable -> insertText -> 光标移到末尾 -> 重绘
+```
+
+**启用前提**：
+
+1. TUI 插件已注册到全局 TUI 配置 `%USERPROFILE%\.config\opencode\tui.json` 的 `plugin` 数组：
+
+   ```json
+   {
+     "$schema": "https://opencode.ai/tui.json",
+     "plugin": [
+       "C:/Users/caoren/Develops/vscode-opencode-bridge/plugins/tui-append-http.tsx"
+     ]
+   }
+   ```
+
+   条目也可以是 `tui.jsonc`（JSONC 支持注释）。插件必须导出非空 `id`（此处为 `local.tui-append-http`）。
+2. **重启 opencode TUI** 才会加载插件（TUI 启动时读取 `tui.json`，修改后不会热更新）。
+3. VS Code 侧执行 `Developer: Reload Window`，让扩展加载新的命令逻辑。
+
+**锁文件**：
+
+TUI 插件启动时在 `127.0.0.1` 上监听随机端口，并把实例信息写到：
+
+```
+%USERPROFILE%\.opencode\ide\tui-<pid>.json
+{ "pid": ..., "port": ..., "directory": <TUI 启动目录>, "startedAt": ... }
+```
+
+插件 dispose 时（TUI 退出）会停止 HTTP 服务并删除该锁文件。扩展只扫描 `tui-` 前缀的文件，不会碰 MCP 用的 `<pid>.json` 锁文件。
+
+**快捷键优先级链**（`opencodeBridge.insertFileReference`）：
+
+1. **TUI 直连**：扫描 `~/.opencode/ide/tui-*.json`，过滤死进程，优先选 `directory` 与当前编辑器所在 workspace folder 匹配的实例，其次选 `startedAt` 最新者；`POST /append`（2 秒超时）成功即提示 `opencode-bridge: sent to opencode TUI`。
+2. **活动终端**：`terminal.sendText` 发送到当前活动终端。
+3. **剪贴板兜底**：无终端时写入剪贴板并提示。
 
 ## opencode MCP 配置
 

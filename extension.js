@@ -8,6 +8,8 @@ const path = require('path');
 const vscode = require('vscode');
 
 const LOCK_DIR = path.join(os.homedir(), '.opencode', 'ide');
+const TUI_LOCK_PREFIX = 'tui-';
+const TUI_APPEND_TIMEOUT_MS = 2000;
 const MAX_BODY_BYTES = 1024 * 1024;
 const AUTH_TOKEN = crypto.randomUUID();
 
@@ -174,7 +176,103 @@ function buildReference(editor) {
   return `@${file}#L${start}-${end}`;
 }
 
-function insertFileReference() {
+function normalizeDir(value) {
+  if (typeof value !== 'string' || value.length === 0) return '';
+  let normalized = toPosix(value).toLowerCase();
+  if (normalized.length > 1 && normalized.endsWith('/')) normalized = normalized.slice(0, -1);
+  return normalized;
+}
+
+function isAlivePid(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    // EPERM means the process exists but is owned by someone else.
+    return !!err && err.code === 'EPERM';
+  }
+}
+
+function listTuiInstances() {
+  let names;
+  try {
+    names = fs.readdirSync(LOCK_DIR);
+  } catch (err) {
+    return [];
+  }
+  const instances = [];
+  for (const name of names) {
+    if (!name.startsWith(TUI_LOCK_PREFIX) || !name.endsWith('.json')) continue;
+    let payload;
+    try {
+      payload = JSON.parse(fs.readFileSync(path.join(LOCK_DIR, name), 'utf8'));
+    } catch (err) {
+      continue;
+    }
+    if (!payload || !isAlivePid(payload.pid)) continue;
+    if (!Number.isInteger(payload.port) || payload.port <= 0) continue;
+    instances.push(payload);
+  }
+  return instances;
+}
+
+function selectTuiInstance(instances, workspaceDir) {
+  const target = normalizeDir(workspaceDir);
+  const matches = target
+    ? instances.filter((instance) => {
+      const dir = normalizeDir(instance.directory);
+      if (!dir) return false;
+      return dir === target || dir.startsWith(target + '/') || target.startsWith(dir + '/');
+    })
+    : [];
+  const pool = matches.length > 0 ? matches : instances;
+  let best;
+  for (const instance of pool) {
+    if (!best || (instance.startedAt || 0) > (best.startedAt || 0)) best = instance;
+  }
+  return best;
+}
+
+async function postToTui(port, text) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TUI_APPEND_TIMEOUT_MS);
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/append`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text }),
+      signal: controller.signal
+    });
+    if (!response.ok) return false;
+    const payload = await response.json().catch(() => null);
+    return !!payload && payload.ok === true;
+  } catch (err) {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function sendToTuiGateways(text, editor) {
+  const instances = listTuiInstances();
+  if (instances.length === 0) return false;
+  const workspaceDir = editor ? editor.document.uri.fsPath : undefined;
+  const ordered = [];
+  let remaining = instances.slice();
+  while (remaining.length > 0) {
+    const picked = selectTuiInstance(remaining, workspaceDir);
+    if (!picked) break;
+    ordered.push(picked);
+    remaining = remaining.filter((instance) => instance !== picked);
+  }
+  for (const instance of ordered) {
+    if (await postToTui(instance.port, text)) return true;
+  }
+  return false;
+}
+
+async function insertFileReference() {
   const editor = vscode.window.activeTextEditor;
   const usable = editor && editor.document.uri.scheme === 'file'
     && vscode.workspace.getWorkspaceFolder(editor.document.uri);
@@ -183,13 +281,20 @@ function insertFileReference() {
     return;
   }
   const reference = buildReference(editor);
+  const text = reference + ' ';
+
+  if (await sendToTuiGateways(text, editor)) {
+    vscode.window.showInformationMessage('opencode-bridge: sent to opencode TUI');
+    return;
+  }
+
   const terminal = vscode.window.activeTerminal;
   if (terminal) {
-    terminal.sendText(reference + ' ', false);
+    terminal.sendText(text, false);
     terminal.show();
     return;
   }
-  vscode.env.clipboard.writeText(reference + ' ').then(() => {
+  vscode.env.clipboard.writeText(text).then(() => {
     vscode.window.showInformationMessage('opencode-bridge: copied to clipboard: ' + reference);
   });
 }
