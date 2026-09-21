@@ -46,25 +46,25 @@
 
 ## 安装
 
-**① 安装扩展** —— 用目录联接（junction）把本仓库的 `extension/` 暴露给 VS Code，仓库即唯一数据源：
+**① 安装扩展** —— 用目录联接（junction）把本仓库的 `extension/` 暴露给 VS Code，仓库即唯一数据源（以下命令在仓库根目录执行）：
 
 ```cmd
-mklink /J "C:\Users\<you>\.vscode\extensions\local.opencode-bridge-0.0.1" "<repo>\extension"
+mklink /J "%USERPROFILE%\.vscode\extensions\local.opencode-bridge-0.0.1" "%CD%\extension"
 ```
 
-**② 安装配套 TUI 插件**（可选；直连注入需要它）——同样用 junction 暴露给 opencode 全局配置目录：
+**② 安装配套 TUI 插件**（可选；直连注入需要它）——同样用 junction 暴露给 opencode 全局配置目录（命令在仓库根目录执行）：
 
 ```cmd
-mklink /J "C:\Users\<you>\.config\opencode\plugins\tui-append-http" "<repo>\tui-plugin"
+mklink /J "%USERPROFILE%\.config\opencode\plugins\tui-append-http" "%CD%\tui-plugin"
 ```
 
-并在 `~/.config/opencode/cli.json` 中登记：
+并在 `%USERPROFILE%\.config\opencode\cli.json` 中登记（该相对路径以 `cli.json` 所在目录为基准）：
 
 ```json
 "plugins": ["oh-my-opencode-slim", "./plugins/tui-append-http"]
 ```
 
-**③ 注册 MCP 服务器** —— 在 opencode 全局配置 `~/.config/opencode/opencode.json` 中添加（命令路径指向 junction）：
+**③ 注册 MCP 服务器** —— 在 opencode 全局配置 `%USERPROFILE%\.config\opencode\opencode.json` 中添加（命令路径指向 junction）：
 
 ```json
 {
@@ -72,13 +72,15 @@ mklink /J "C:\Users\<you>\.config\opencode\plugins\tui-append-http" "<repo>\tui-
     "servers": {
       "vscode": {
         "type": "local",
-        "command": ["node", "C:\\Users\\<you>\\.vscode\\extensions\\local.opencode-bridge-0.0.1\\mcp-shim.js"],
+        "command": ["node", "%USERPROFILE%\\.vscode\\extensions\\local.opencode-bridge-0.0.1\\mcp-shim.js"],
         "enabled": true
       }
     }
   }
 }
 ```
+
+> `opencode.json` 不会展开环境变量，上面的 `%USERPROFILE%` 只是占位；实际写入时需替换为真实绝对路径。
 
 **④ 生效** —— 重启 VS Code（或执行 `Developer: Reload Window`），并重新打开 opencode 会话以拉起 MCP 服务器。
 

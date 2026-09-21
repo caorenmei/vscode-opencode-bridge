@@ -98,10 +98,10 @@ vscode-opencode-bridge/                 # 私有根工作区（不发布）
 
 ### 1. 安装 VS Code 扩展（junction）
 
-用目录联接把仓库的 `extension/` 暴露给 VS Code，仓库即唯一数据源，无需打包 `.vsix`：
+用目录联接把仓库的 `extension/` 暴露给 VS Code，仓库即唯一数据源，无需打包 `.vsix`。以下命令**在仓库根目录执行**（`%CD%` 即仓库根）：
 
 ```cmd
-mklink /J "C:\Users\caoren\.vscode\extensions\local.opencode-bridge-0.0.1" "C:\Users\caoren\Develops\vscode-opencode-bridge\extension"
+mklink /J "%USERPROFILE%\.vscode\extensions\local.opencode-bridge-0.0.1" "%CD%\extension"
 ```
 
 - 扩展目录名必须遵循 `<publisher>.<name>-<version>` 约定（此处为 `local.opencode-bridge-0.0.1`），否则 VS Code 不会将其识别为扩展。
@@ -109,10 +109,10 @@ mklink /J "C:\Users\caoren\.vscode\extensions\local.opencode-bridge-0.0.1" "C:\U
 
 ### 2. 安装 TUI 插件（junction + cli.json）
 
-直连注入需要配套插件。同样用 junction 暴露给 opencode 全局配置目录：
+直连注入需要配套插件。同样用 junction 暴露给 opencode 全局配置目录（同样在仓库根目录执行）：
 
 ```cmd
-mklink /J "C:\Users\caoren\.config\opencode\plugins\tui-append-http" "C:\Users\caoren\Develops\vscode-opencode-bridge\tui-plugin"
+mklink /J "%USERPROFILE%\.config\opencode\plugins\tui-append-http" "%CD%\tui-plugin"
 ```
 
 再把它登记进全局 CLI 配置 `%USERPROFILE%\.config\opencode\cli.json` 的 `plugins` 数组（追加一项即可，其余条目保持不变）：
@@ -139,7 +139,7 @@ mklink /J "C:\Users\caoren\.config\opencode\plugins\tui-append-http" "C:\Users\c
         "type": "local",
         "command": [
           "node",
-          "C:\\Users\\caoren\\.vscode\\extensions\\local.opencode-bridge-0.0.1\\mcp-shim.js"
+          "%USERPROFILE%\\.vscode\\extensions\\local.opencode-bridge-0.0.1\\mcp-shim.js"
         ],
         "enabled": true
       }
@@ -148,17 +148,19 @@ mklink /J "C:\Users\caoren\.config\opencode\plugins\tui-append-http" "C:\Users\c
 }
 ```
 
+> `opencode.json` 不会展开环境变量，上面的 `%USERPROFILE%` 只是占位；实际写入时需替换为真实绝对路径（可在 `cmd` 中执行 `echo %USERPROFILE%` 查看）。
+
 命令路径指向 **junction 路径**，因此经 junction 直达仓库的 `extension/mcp-shim.js`；源码目录移动或重构后此配置无需改动。
 
 ### junction 维护注意
 
 - 创建 junction 需要管理员权限或开发者模式，在 `cmd` 中执行（PowerShell 的 `New-Item -ItemType Junction` 亦可）。
 - **删除 junction 只能用 `rmdir`（或确认后的 `Remove-Item`），它只删除链接本身**；不要使用会递归删除目标内容的命令，否则会连带删掉仓库文件。
-- 若 VS Code 的扩展登记损坏（`code --list-extensions` 不再列出该扩展，或扩展面板报错），按下面两步重建：
+- 若 VS Code 的扩展登记损坏（`code --list-extensions` 不再列出该扩展，或扩展面板报错），按下面两步重建（在仓库根目录执行）：
 
 ```cmd
-rmdir "C:\Users\caoren\.vscode\extensions\local.opencode-bridge-0.0.1"
-mklink /J "C:\Users\caoren\.vscode\extensions\local.opencode-bridge-0.0.1" "C:\Users\caoren\Develops\vscode-opencode-bridge\extension"
+rmdir "%USERPROFILE%\.vscode\extensions\local.opencode-bridge-0.0.1"
+mklink /J "%USERPROFILE%\.vscode\extensions\local.opencode-bridge-0.0.1" "%CD%\extension"
 ```
 
 ## 使用方式
