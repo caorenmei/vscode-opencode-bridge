@@ -32,7 +32,8 @@ vscode-opencode-bridge/
 ├── extension.js                       # VS Code 扩展主体：HTTP 桥 + 命令实现
 ├── mcp-shim.js                        # stdio MCP 服务器，转发到扩展的 HTTP 服务
 ├── plugins/
-│   └── tui-append-http.tsx            # opencode v2 TUI 插件：接收注入请求并写入 composer
+│   └── tui-append-http/
+│       └── tui.ts                     # opencode 2.0.11 TUI 插件：接收注入请求并写入 composer
 ├── README.md
 └── .gitignore
 ```
@@ -79,27 +80,38 @@ mklink /J "C:\Users\caoren\.vscode\extensions\local.opencode-bridge-0.0.1" "C:\U
 **架构（一句话）**：
 
 ```
-VS Code 扩展 --POST 127.0.0.1:<port>/append--> TUI 插件 (tui-append-http.tsx)
-             --> api.client.tui.appendPrompt()（官方链路）
-                 失败则 renderer 兜底：定位 TextareaRenderable -> insertText -> 光标移到末尾 -> 重绘
+VS Code 扩展 --POST 127.0.0.1:<port>/append--> TUI 插件 (plugins/tui-append-http/tui.ts)
+             --> api.client.tui.appendPrompt()（前向兼容，2.0.11 服务端已无此路由）
+                 否则 renderer 兜底：定位 TextareaRenderable -> insertText -> 光标移到末尾 -> 重绘
 ```
+
+**插件机制（opencode 2.0.11）**：
+
+- 2.0.11 只**自动发现目录**：`<全局配置目录>/plugins/<子目录>/tui.ts`（或 `tui.tsx`），目录可以是 junction / 符号链接。最小文件集就是单个 `tui.ts`，无需 `index.ts` 或 `package.json`。
+- 模块形状为 `import { Plugin } from "@opencode/plugin/tui"` + `export default Plugin.define({ id, setup(context) { ... return cleanup } })`。
+- 旧版（dev 分支）的 `export default { id, tui(api) }` 与 `api.lifecycle.onDispose` **在 2.0.11 下不会被加载**；资源清理由 `setup` 返回的 cleanup 函数承担。
+- 2.0.11 服务端已移除 `/tui/append-prompt` 路由，因此注入以 renderer 为主路径。
 
 **启用前提**：
 
-1. TUI 插件已注册到全局 TUI 配置 `%USERPROFILE%\.config\opencode\tui.json` 的 `plugin` 数组：
+1. 插件目录已通过 **junction** 暴露给全局配置目录（单一数据源，改仓库即改插件）：
 
-   ```json
-   {
-     "$schema": "https://opencode.ai/tui.json",
-     "plugin": [
-       "C:/Users/caoren/Develops/vscode-opencode-bridge/plugins/tui-append-http.tsx"
-     ]
-   }
+   ```cmd
+   mklink /J "C:\Users\caoren\.config\opencode\plugins\tui-append-http" "C:\Users\caoren\Develops\vscode-opencode-bridge\plugins\tui-append-http"
    ```
 
-   条目也可以是 `tui.jsonc`（JSONC 支持注释）。插件必须导出非空 `id`（此处为 `local.tui-append-http`）。
-2. **重启 opencode TUI** 才会加载插件（TUI 启动时读取 `tui.json`，修改后不会热更新）。
-3. VS Code 侧执行 `Developer: Reload Window`，让扩展加载新的命令逻辑。
+2. 全局 CLI 配置 `%USERPROFILE%\.config\opencode\cli.json` 的 `plugins` 数组注册该目录（相对路径基于 `cli.json` 所在目录；指向目录时若目录内无 tui 入口会弹 toast，便于排查）：
+
+   ```json
+   "plugins": [
+     "oh-my-opencode-slim",
+     "./plugins/tui-append-http"
+   ]
+   ```
+
+   自动发现与 `plugins` 注册按 href 去重，不会重复加载。`tui.json` 在 `cli.json` 存在时不被 2.0.11 读取，条目保留仅作历史记录。
+3. 插件加载成功会在 TUI 弹出 toast：`append-http / listening on 127.0.0.1:<port>`。
+4. VS Code 侧执行 `Developer: Reload Window`，让扩展加载新的命令逻辑。
 
 **锁文件**：
 
@@ -111,6 +123,15 @@ TUI 插件启动时在 `127.0.0.1` 上监听随机端口，并把实例信息写
 ```
 
 插件 dispose 时（TUI 退出）会停止 HTTP 服务并删除该锁文件。扩展只扫描 `tui-` 前缀的文件，不会碰 MCP 用的 `<pid>.json` 锁文件。
+
+**HTTP 契约**（锁文件与路由均为扩展侧依赖，勿随意变更）：
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| `GET` | `/health` | 返回 `{ ok: true, pid, port, directory }` |
+| `POST` | `/append` | JSON `{ text }`；成功 `{ ok: true, via: "renderer" \| "api" }`；`text` 非字符串或为空 → `400 { ok: false, error: "text required" }`；找不到 composer → `503 { ok: false, error: "composer not found" }` |
+
+composer 定位顺序：`renderer.currentFocusedEditor`（需同时满足 duck-type 且带 `getClipboardText`）→ 否则从 `renderer.root` 递归 `getChildren()`，优先带 `getClipboardText` 的节点，否则取第一个 duck-type 匹配节点。
 
 **快捷键优先级链**（`opencodeBridge.insertFileReference`）：
 
