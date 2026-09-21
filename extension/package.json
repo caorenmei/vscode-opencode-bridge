@@ -4,6 +4,17 @@
   "description": "Minimal local bridge exposing VS Code editor state to opencode over HTTP + MCP.",
   "publisher": "local",
   "version": "0.0.1",
+  "license": "MIT",
+  "icon": "images/icon.png",
+  "keywords": [
+    "opencode",
+    "ai",
+    "bridge",
+    "mcp"
+  ],
+  "categories": [
+    "Other"
+  ],
   "engines": {
     "vscode": "^1.85.0"
   },

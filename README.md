@@ -33,8 +33,11 @@ vscode-opencode-bridge/                 # 私有根工作区（不发布）
 ├── package.json                        # devDependencies(typescript/@types/node/@types/vscode) + scripts
 ├── tsconfig.base.json                  # 共享 strict 编译选项（两个产品共同 extends）
 ├── extension/                          # 产品①：VS Code 扩展域（mcp-shim 是其 MCP 客户端）
-│   ├── package.json                    #   VS Code 扩展清单（name/publisher/version/engines/main/contributes）
+│   ├── package.json                    #   VS Code 扩展清单（name/publisher/version/engines/main/contributes/icon/categories/license）
 │   ├── tsconfig.json                   #   extends ../tsconfig.base.json；rootDir "src"、outDir "."
+│   ├── README.md                       #   扩展面板 Details 页正文（VS Code 读取此文件）
+│   ├── LICENSE                         #   MIT 许可证全文
+│   ├── images/icon.png                 #   扩展图标（128×128 PNG）
 │   ├── src/
 │   │   ├── extension.ts                #   HTTP 桥 + Ctrl+Alt+K 命令
 │   │   └── mcp-shim.ts                 #   stdio MCP 服务器
@@ -90,6 +93,7 @@ npm run build
 - `extension/` 采用 strict TypeScript（`noUncheckedIndexedAccess` / `noImplicitReturns` / `noUnusedLocals` 等全开），零隐式 any；产物落在 `extension/` 根部，与扩展清单的 `main: "./extension.js"` 和 junction 安装形态保持一致。
 - `tui-plugin/tui.ts` 由 opencode 的 Bun 宿主**直接加载 TS 源码**，不参与 `npm run build`；其 `tsconfig.json` 与 `types/*.d.ts`（对 `@opencode/plugin/tui` 与 Bun 全局的 ambient 声明）仅供 `npm run check` 使用。
 - `extension/extension.js` / `extension/mcp-shim.js` 是构建产物、不进版本库（见 `.gitignore`），请勿手工编辑。
+- `extension/README.md` / `extension/LICENSE` / `extension/images/icon.png` 是 **扩展面板 Details 页** 的展示内容（VS Code 从扩展安装目录读取），经 junction 自动可见；根 `README.md` 是仓库开发文档，两者互不替代。
 
 ## 安装方式（junction 方案）
 
