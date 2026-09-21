@@ -176,7 +176,7 @@ function buildReference(editor) {
   return `@${file}#L${start}-${end}`;
 }
 
-function normalizeDir(value) {
+function normalizePath(value) {
   if (typeof value !== 'string' || value.length === 0) return '';
   let normalized = toPosix(value).toLowerCase();
   if (normalized.length > 1 && normalized.endsWith('/')) normalized = normalized.slice(0, -1);
@@ -217,21 +217,26 @@ function listTuiInstances() {
   return instances;
 }
 
-function selectTuiInstance(instances, workspaceDir) {
-  const target = normalizeDir(workspaceDir);
-  const matches = target
-    ? instances.filter((instance) => {
-      const dir = normalizeDir(instance.directory);
-      if (!dir) return false;
-      return dir === target || dir.startsWith(target + '/') || target.startsWith(dir + '/');
-    })
-    : [];
-  const pool = matches.length > 0 ? matches : instances;
-  let best;
-  for (const instance of pool) {
-    if (!best || (instance.startedAt || 0) > (best.startedAt || 0)) best = instance;
+// Strict directory match: the selected file itself must live in the TUI
+// instance's directory (or below it). The target is the file path, NOT the
+// workspace folder, so a TUI session opened elsewhere is never injected into.
+// Segment-boundary comparison keeps "foo/bar2" from matching "foo/bar".
+function matchTuiInstances(instances, filePath) {
+  const file = normalizePath(filePath);
+  if (!file) return [];
+  const matches = [];
+  for (const instance of instances) {
+    const dir = normalizePath(instance.directory);
+    if (!dir) continue;
+    if (file !== dir && !file.startsWith(dir + '/')) continue;
+    matches.push({ instance, depth: dir.length });
   }
-  return best;
+  // Most specific (longest) directory wins; ties fall back to newest instance.
+  matches.sort((a, b) => {
+    if (b.depth !== a.depth) return b.depth - a.depth;
+    return (b.instance.startedAt || 0) - (a.instance.startedAt || 0);
+  });
+  return matches.map((entry) => entry.instance);
 }
 
 async function postToTui(port, text) {
@@ -255,18 +260,9 @@ async function postToTui(port, text) {
 }
 
 async function sendToTuiGateways(text, editor) {
-  const instances = listTuiInstances();
-  if (instances.length === 0) return false;
-  const workspaceDir = editor ? editor.document.uri.fsPath : undefined;
-  const ordered = [];
-  let remaining = instances.slice();
-  while (remaining.length > 0) {
-    const picked = selectTuiInstance(remaining, workspaceDir);
-    if (!picked) break;
-    ordered.push(picked);
-    remaining = remaining.filter((instance) => instance !== picked);
-  }
-  for (const instance of ordered) {
+  if (!editor) return false;
+  const candidates = matchTuiInstances(listTuiInstances(), editor.document.uri.fsPath);
+  for (const instance of candidates) {
     if (await postToTui(instance.port, text)) return true;
   }
   return false;

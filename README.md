@@ -12,7 +12,7 @@
      - 单行选区 → `@相对路径#L12`
      - 多行选区 → `@相对路径#L12-30`
    - 若存在活动终端，引用直接发送到该终端；否则写入剪贴板并弹出提示。
-   - 若检测到运行中的 opencode TUI 实例（`tui-<pid>.json` 锁文件），则优先**跨终端直连注入** TUI 输入框（见下文「TUI 直连注入」），失败才回退到终端 / 剪贴板。
+   - 若选中文件位于某个运行中的 opencode TUI 会话目录内（`tui-<pid>.json` 锁文件），则优先**跨终端直连注入** TUI 输入框（见下文「TUI 直连注入」）；目录不匹配或注入失败才回退到活跃终端 / 剪贴板。
    - 扩展激活时（`onStartupFinished`）在 `127.0.0.1` 的随机端口启动一个仅监听本机的 HTTP 服务（`POST /rpc`，Bearer 令牌鉴权），并把连接信息写入锁文件 `%USERPROFILE%\.opencode\ide\<pid>.json`。
 
 2. **MCP 侧（`mcp-shim.js`）**
@@ -114,9 +114,17 @@ TUI 插件启动时在 `127.0.0.1` 上监听随机端口，并把实例信息写
 
 **快捷键优先级链**（`opencodeBridge.insertFileReference`）：
 
-1. **TUI 直连**：扫描 `~/.opencode/ide/tui-*.json`，过滤死进程，优先选 `directory` 与当前编辑器所在 workspace folder 匹配的实例，其次选 `startedAt` 最新者；`POST /append`（2 秒超时）成功即提示 `opencode-bridge: sent to opencode TUI`。
-2. **活动终端**：`terminal.sendText` 发送到当前活动终端。
-3. **剪贴板兜底**：无终端时写入剪贴板并提示。
+1. **TUI 直连**：扫描 `~/.opencode/ide/tui-*.json`，过滤死进程，仅保留目录匹配的实例（见下方「目录兼容性」）；多个匹配时选 `directory` 最长（最具体）者。`POST /append`（2 秒超时）成功即提示 `opencode-bridge: sent to opencode TUI`。
+2. **活动终端**：`terminal.sendText` 发送到当前活动终端（仅 `vscode.window.activeTerminal`，不按名查找、不自动新建）。
+3. **剪贴板兜底**：无活动终端时写入剪贴板并提示。
+
+**目录兼容性**：
+
+判断基准是**选中文件自身的路径**，而不是编辑器所在的 workspace folder。比较前双方统一小写、`\` 转 `/`、去掉尾部 `/`，再做**路径段级**前缀匹配：
+
+- 匹配条件：`filePath === directory` 或 `filePath.startsWith(directory + "/")`，即文件位于该 TUI 会话打开目录**之内**（含子目录）。
+- 段边界判断可避免 `foo/bar2/x.cpp` 误配到 `/foo/bar`。
+- **不匹配即跳过**：若没有任何 TUI 实例的 `directory` 覆盖该文件（例如 TUI 在别的目录启动），不会回退到「最新实例」，而是直接落到活跃终端 / 剪贴板，避免把引用误注入到无关会话。
 
 ## opencode MCP 配置
 
