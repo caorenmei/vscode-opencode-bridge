@@ -3,7 +3,7 @@ node_modules/
 .DS_Store
 Thumbs.db
 
-# TypeScript build output (compiled from src/ by `npm run build`)
-/extension.js
-/mcp-shim.js
+# TypeScript build output (compiled from extension/src/ by `npm run build`)
+/extension/extension.js
+/extension/mcp-shim.js
 *.tsbuildinfo

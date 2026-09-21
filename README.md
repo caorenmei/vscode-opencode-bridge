@@ -2,13 +2,13 @@
 
 极简的 VS Code ↔ opencode 桥接扩展与 MCP 服务器，**运行期零依赖**（仅 Node 内置模块）。
 
-源码使用 TypeScript（`src/`），由 `tsc` 编译为仓库根目录的 `extension.js` / `mcp-shim.js`——VS Code 与 opencode 只加载编译产物，因此 junction、`package.json` 的 `main`、`opencode.json` 的 MCP 命令路径全部无需变更。
+源码使用 TypeScript，按**产品域**拆分为两个独立目录：`extension/`（VS Code 扩展 + MCP shim）与 `tui-plugin/`（opencode TUI 插件）。扩展源码由 `tsc` 编译为 `extension/extension.js` / `extension/mcp-shim.js`——VS Code 与 opencode 只加载编译产物，因此 junction、扩展清单的 `main`、`opencode.json` 的 MCP 命令路径全部无需变更。
 
 ## 项目简介
 
 本扩展替代 opencode 官方 VS Code 扩展，承担两件事：
 
-1. **编辑器侧（源码 `src/extension.ts` → 产物 `extension.js`）**
+1. **编辑器侧（源码 `extension/src/extension.ts` → 产物 `extension/extension.js`）**
    - `Ctrl+Alt+K`（macOS 为 `Cmd+Alt+K`）插入当前文件的引用：
      - 空选区 → `@相对路径`
      - 单行选区 → `@相对路径#L12`
@@ -17,7 +17,7 @@
    - 若选中文件位于某个运行中的 opencode TUI 会话目录内（`tui-<pid>.json` 锁文件），则优先**跨终端直连注入** TUI 输入框（见下文「TUI 直连注入」）；目录不匹配或注入失败才回退到活跃终端 / 剪贴板。
    - 扩展激活时（`onStartupFinished`）在 `127.0.0.1` 的随机端口启动一个仅监听本机的 HTTP 服务（`POST /rpc`，Bearer 令牌鉴权），并把连接信息写入锁文件 `%USERPROFILE%\.opencode\ide\<pid>.json`。
 
-2. **MCP 侧（源码 `src/mcp-shim.ts` → 产物 `mcp-shim.js`）**
+2. **MCP 侧（源码 `extension/src/mcp-shim.ts` → 产物 `extension/mcp-shim.js`）**
    - 独立的 stdio MCP 服务器（NDJSON 行分隔的 JSON-RPC，非 LSP 的 `Content-Length` 分帧）。
    - 扫描 `%USERPROFILE%\.opencode\ide\*.json`，过滤已死进程，优先匹配当前工作目录，其次取最新启动的实例，然后经 HTTP 转发到 VS Code 扩展。
    - 向 opencode 暴露三个工具：
@@ -29,25 +29,36 @@
 ## 目录结构
 
 ```
-vscode-opencode-bridge/
-├── src/
-│   ├── extension.ts                   # VS Code 扩展源码：HTTP 桥 + 命令实现
-│   └── mcp-shim.ts                    # stdio MCP 服务器源码
-├── plugins/
-│   └── tui-append-http/
-│       ├── tui.ts                     # opencode 2.0.11 TUI 插件（TS 源码直跑，不参与 tsc 构建）
-│       ├── tsconfig.json              # 插件独立类型检查配置（noEmit）
-│       └── types/                     # 宿主 API 的 ambient 声明（不参与运行）
-├── tsconfig.json                      # 根 tsc 配置（strict，输出到仓库根）
-├── package.json                       # 扩展清单（命令、快捷键、激活事件、engines、scripts、devDependencies）
-├── extension.js                       # 【构建产物】src/extension.ts 编译结果（gitignore）
-├── mcp-shim.js                        # 【构建产物】src/mcp-shim.ts 编译结果（gitignore）
+vscode-opencode-bridge/                 # 私有根工作区（不发布）
+├── package.json                        # devDependencies(typescript/@types/node/@types/vscode) + scripts
+├── tsconfig.base.json                  # 共享 strict 编译选项（两个产品共同 extends）
+├── extension/                          # 产品①：VS Code 扩展域（mcp-shim 是其 MCP 客户端）
+│   ├── package.json                    #   VS Code 扩展清单（name/publisher/version/engines/main/contributes）
+│   ├── tsconfig.json                   #   extends ../tsconfig.base.json；rootDir "src"、outDir "."
+│   ├── src/
+│   │   ├── extension.ts                #   HTTP 桥 + Ctrl+Alt+K 命令
+│   │   └── mcp-shim.ts                 #   stdio MCP 服务器
+│   ├── extension.js                    #   【构建产物】gitignore
+│   └── mcp-shim.js                     #   【构建产物】gitignore
+├── tui-plugin/                         # 产品②：opencode TUI 插件域
+│   ├── tui.ts                          #   TS 源码直跑（Bun 宿主加载），不参与 tsc 构建
+│   ├── tsconfig.json                   #   extends ../tsconfig.base.json；noEmit，仅类型检查
+│   └── types/                          #   宿主 API 的 ambient 声明（不参与运行）
 ├── README.md
 ├── package-lock.json
 └── .gitignore
 ```
 
-> 修改 `src/` 或 `plugins/` 下的源码后必须 `npm run build`，否则加载的仍是旧产物。
+> 修改 `extension/src/` 或 `tui-plugin/` 下的源码后必须 `npm run build`，否则加载的仍是旧产物。
+
+### junction 指向表
+
+| 消费方路径 | 类型 | 指向仓库内 |
+| --- | --- | --- |
+| `%USERPROFILE%\.vscode\extensions\local.opencode-bridge-0.0.1` | Junction | `extension/` |
+| `%USERPROFILE%\.config\opencode\plugins\tui-append-http` | Junction | `tui-plugin/` |
+
+junction **名称**保持不变，因此 `cli.json` 与 `opencode.json` 中的外部引用无需改动。
 
 运行时产物（不纳入版本管理）：
 
@@ -58,53 +69,54 @@ vscode-opencode-bridge/
 
 ## 开发
 
-克隆后先初始化（安装 devDependencies 并编译出 `extension.js` / `mcp-shim.js`）：
+克隆后先初始化（安装 devDependencies 并编译出扩展产物）：
 
 ```bash
 npm install
 npm run build
 ```
 
-常用脚本：
+常用脚本（均从仓库根执行）：
 
 | 命令 | 作用 |
 | --- | --- |
-| `npm run build` | 按根 `tsconfig.json` 编译 `src/` → 仓库根 `extension.js` / `mcp-shim.js` |
+| `npm run build` | 按 `extension/tsconfig.json` 编译 `extension/src/` → `extension/extension.js` / `extension/mcp-shim.js` |
 | `npm run watch` | 同上，watch 模式 |
-| `npm run check` | 类型检查：`src/` 与 `plugins/tui-append-http/`（均 `--noEmit`，strict 全开） |
+| `npm run check` | 类型检查：`extension/` 与 `tui-plugin/` 两套 tsconfig（均 `--noEmit`，strict 全开） |
 
 约定：
 
-- `src/` 采用 strict TypeScript（`noUncheckedIndexedAccess` / `noImplicitReturns` / `noUnusedLocals` 等全开），零隐式 any。
-- 编译产物必须落在仓库根，才能让 `package.json` 的 `main`、junction 路径与 `opencode.json` 的 MCP 命令路径保持不变。
-- `plugins/tui-append-http/tui.ts` 由 opencode 的 Bun 宿主**直接加载 TS 源码**，不参与 `npm run build`；它拥有独立的 `tsconfig.json` 与 `types/*.d.ts`（对 `@opencode/plugin/tui` 与 Bun 全局的 ambient 声明），仅供 `npm run check` 使用。
-- `extension.js` / `mcp-shim.js` 是构建产物、不进版本库（见 `.gitignore`），请勿手工编辑。
+- 两个产品各自 `extends` 根 `tsconfig.base.json`；base 只放共享 strict 选项，`module` / `moduleResolution` / `rootDir` / `outDir` / `include` 由各产品覆写。
+- `extension/` 采用 strict TypeScript（`noUncheckedIndexedAccess` / `noImplicitReturns` / `noUnusedLocals` 等全开），零隐式 any；产物落在 `extension/` 根部，与扩展清单的 `main: "./extension.js"` 和 junction 安装形态保持一致。
+- `tui-plugin/tui.ts` 由 opencode 的 Bun 宿主**直接加载 TS 源码**，不参与 `npm run build`；其 `tsconfig.json` 与 `types/*.d.ts`（对 `@opencode/plugin/tui` 与 Bun 全局的 ambient 声明）仅供 `npm run check` 使用。
+- `extension/extension.js` / `extension/mcp-shim.js` 是构建产物、不进版本库（见 `.gitignore`），请勿手工编辑。
 
 ## 安装方式（junction 方案）
 
-扩展通过 **目录联接（junction）** 安装到 VS Code 扩展目录，使仓库成为唯一数据源，无需打包 `.vsix`，也无需重复拷贝：
+两个产品各通过一个 **目录联接（junction）** 暴露给消费方，使仓库成为唯一数据源，无需打包 `.vsix`，也无需重复拷贝：
 
 ```cmd
-mklink /J "C:\Users\caoren\.vscode\extensions\local.opencode-bridge-0.0.1" "C:\Users\caoren\Develops\vscode-opencode-bridge"
+mklink /J "C:\Users\caoren\.vscode\extensions\local.opencode-bridge-0.0.1" "C:\Users\caoren\Develops\vscode-opencode-bridge\extension"
+mklink /J "C:\Users\caoren\.config\opencode\plugins\tui-append-http" "C:\Users\caoren\Develops\vscode-opencode-bridge\tui-plugin"
 ```
 
 要点：
 
-- 目标目录名必须遵循 `<publisher>.<name>-<version>` 约定（此处为 `local.opencode-bridge-0.0.1`），否则 VS Code 不会将其识别为扩展。
+- 扩展 junction 的目标目录名必须遵循 `<publisher>.<name>-<version>` 约定（此处为 `local.opencode-bridge-0.0.1`），否则 VS Code 不会将其识别为扩展。
 - junction 需要管理员权限或开发者模式；在 `cmd` 中执行（PowerShell 的 `New-Item -ItemType Junction` 亦可）。
 - 安装后 `code --list-extensions` 应列出 `local.opencode-bridge`。
 
 ## 更新流程
 
-1. 直接修改仓库中的源码（`src/extension.ts` / `src/mcp-shim.ts` / `package.json`）。
-2. 执行 `npm run build` 重新生成 `extension.js` / `mcp-shim.js`。
+1. 直接修改仓库中的源码（`extension/src/extension.ts` / `extension/src/mcp-shim.ts` / 扩展清单）。
+2. 执行 `npm run build` 重新生成 `extension/extension.js` / `extension/mcp-shim.js`。
 3. 在 VS Code 中执行 `Developer: Reload Window` 即可生效——扩展目录通过 junction 指向仓库，无需重新拷贝文件。
 4. `mcp-shim.js` 由 opencode 每次启动 MCP 服务器时读取，重启 opencode 会话即可加载新版本。
 5. 若 VS Code 的扩展登记损坏（例如 `code --list-extensions` 不再列出该扩展，或扩展面板报错），按下面步骤重建：
 
 ```cmd
 rmdir "C:\Users\caoren\.vscode\extensions\local.opencode-bridge-0.0.1"
-mklink /J "C:\Users\caoren\.vscode\extensions\local.opencode-bridge-0.0.1" "C:\Users\caoren\Develops\vscode-opencode-bridge"
+mklink /J "C:\Users\caoren\.vscode\extensions\local.opencode-bridge-0.0.1" "C:\Users\caoren\Develops\vscode-opencode-bridge\extension"
 ```
 
 注意：删除 junction 必须用 `rmdir`（或 `Remove-Item` 后确认），**不要**用会递归删除目标内容的命令，以免误删仓库文件。
@@ -116,7 +128,7 @@ mklink /J "C:\Users\caoren\.vscode\extensions\local.opencode-bridge-0.0.1" "C:\U
 **架构（一句话）**：
 
 ```
-VS Code 扩展 --POST 127.0.0.1:<port>/append--> TUI 插件 (plugins/tui-append-http/tui.ts)
+VS Code 扩展 --POST 127.0.0.1:<port>/append--> TUI 插件 (tui-plugin/tui.ts)
              --> api.client.tui.appendPrompt()（前向兼容，2.0.11 服务端已无此路由）
                  否则 renderer 兜底：定位 TextareaRenderable -> insertText -> 光标移到末尾 -> 重绘
 ```
@@ -133,7 +145,7 @@ VS Code 扩展 --POST 127.0.0.1:<port>/append--> TUI 插件 (plugins/tui-append-
 1. 插件目录已通过 **junction** 暴露给全局配置目录（单一数据源，改仓库即改插件）：
 
    ```cmd
-   mklink /J "C:\Users\caoren\.config\opencode\plugins\tui-append-http" "C:\Users\caoren\Develops\vscode-opencode-bridge\plugins\tui-append-http"
+   mklink /J "C:\Users\caoren\.config\opencode\plugins\tui-append-http" "C:\Users\caoren\Develops\vscode-opencode-bridge\tui-plugin"
    ```
 
 2. 全局 CLI 配置 `%USERPROFILE%\.config\opencode\cli.json` 的 `plugins` 数组注册该目录（相对路径基于 `cli.json` 所在目录；指向目录时若目录内无 tui 入口会弹 toast，便于排查）：

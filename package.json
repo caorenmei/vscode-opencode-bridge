@@ -1,35 +1,12 @@
 {
-  "name": "opencode-bridge",
-  "displayName": "opencode Bridge",
-  "description": "Minimal local bridge exposing VS Code editor state to opencode over HTTP + MCP.",
-  "publisher": "local",
+  "name": "vscode-opencode-bridge",
   "version": "0.0.1",
-  "engines": {
-    "vscode": "^1.85.0"
-  },
-  "main": "./extension.js",
-  "activationEvents": [
-    "onStartupFinished"
-  ],
-  "contributes": {
-    "commands": [
-      {
-        "command": "opencodeBridge.insertFileReference",
-        "title": "opencode: Insert File Reference"
-      }
-    ],
-    "keybindings": [
-      {
-        "command": "opencodeBridge.insertFileReference",
-        "key": "ctrl+alt+k",
-        "mac": "cmd+alt+k"
-      }
-    ]
-  },
+  "private": true,
+  "description": "Workspace root for the VS Code extension and the opencode TUI plugin.",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "watch": "tsc -w -p tsconfig.json",
-    "check": "tsc -p tsconfig.json --noEmit && tsc -p plugins/tui-append-http/tsconfig.json --noEmit"
+    "build": "tsc -p extension/tsconfig.json",
+    "watch": "tsc -w -p extension/tsconfig.json",
+    "check": "tsc -p extension/tsconfig.json --noEmit && tsc -p tui-plugin/tsconfig.json --noEmit"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",

@@ -1,0 +1,14 @@
+{
+  // VS Code extension product: compiles src/ to the extension root, so the
+  // manifest's "main": "./extension.js" and the junction-installed folder keep
+  // working unchanged.
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "rootDir": "src",
+    "outDir": "."
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "extension.js", "mcp-shim.js"]
+}

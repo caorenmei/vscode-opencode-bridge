@@ -1,0 +1,11 @@
+{
+  // opencode TUI plugin product: loaded as TypeScript source by the Bun host,
+  // so this config is type-checking only (never emits).
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "noEmit": true
+  },
+  "include": ["tui.ts", "types/**/*.d.ts"]
+}
