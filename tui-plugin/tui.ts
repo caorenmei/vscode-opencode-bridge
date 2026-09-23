@@ -192,15 +192,8 @@ export default Plugin.define({
       console.error("[tui-append-http] failed to write lock file:", err);
     }
 
-    try {
-      context.ui?.toast?.show({
-        variant: "success",
-        title: "append-http",
-        message: "listening on 127.0.0.1:" + server.port,
-      });
-    } catch (err) {
-      console.error("[tui-append-http] toast failed:", err);
-    }
+    // No startup toast: the lock file + /health endpoint are enough for
+    // diagnosis, and a bubble on every TUI launch is just noise.
 
     return () => {
       try {
