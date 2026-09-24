@@ -1,5 +1,33 @@
 # vscode-opencode-bridge
 
+## 快速开始 / Quick Start
+
+### 中文
+
+这个仓库提供一个轻量级的本地桥接，让 VS Code 和 opencode 之间可以直接交换编辑器状态、选区和文件引用。它的核心能力是：在 VS Code 中按快捷键生成 `@文件` / `@文件#L12` 引用，并把内容发送到 opencode TUI 会话。
+
+```bash
+npm install
+npm run build
+```
+
+- Windows：使用 `mklink /J` 挂载扩展和 TUI 插件
+- macOS / Linux：使用 `ln -sfn` 挂载扩展和 TUI 插件
+- 完整安装步骤见后续章节：`安装与配置`
+
+### English
+
+This repository provides a lightweight local bridge between VS Code and opencode, allowing editor state, selection, and file references to flow directly into the opencode TUI. The core flow is: generate `@file` / `@file#L12` references in VS Code and send them into an opencode session.
+
+```bash
+npm install
+npm run build
+```
+
+- Windows: use `mklink /J` to mount the extension and TUI plugin
+- macOS / Linux: use `ln -sfn` to mount the extension and TUI plugin
+- Full installation details are in the later section: `安装与配置`
+
 ## 项目简介
 
 本仓库是 VS Code 与 opencode 之间的极简本地桥接，由**两个产品 + 一份目录契约**组成，运行期零第三方依赖（仅 Node 内置模块），源码为 TypeScript：
@@ -96,26 +124,51 @@ vscode-opencode-bridge/                 # 私有根工作区（不发布）
 - **VS Code ≥ 1.85.0**
 - Node.js 18+（构建时需要；扩展宿主已自带运行时）
 
-### 1. 安装 VS Code 扩展（junction）
+### 1. 安装 VS Code 扩展
 
-用目录联接把仓库的 `extension/` 暴露给 VS Code，仓库即唯一数据源，无需打包 `.vsix`。以下命令**在仓库根目录执行**（`%CD%` 即仓库根）：
+用目录链接把仓库的 `extension/` 暴露给 VS Code，仓库即唯一数据源，无需打包 `.vsix`。
+
+#### Windows
+
+以下命令**在仓库根目录执行**（`%CD%` 即仓库根）
 
 ```cmd
 mklink /J "%USERPROFILE%\.vscode\extensions\local.opencode-bridge-0.0.1" "%CD%\extension"
 ```
 
+#### macOS / Linux
+
+```bash
+mkdir -p "$HOME/.vscode/extensions"
+ln -sfn "$(pwd)/extension" "$HOME/.vscode/extensions/local.opencode-bridge-0.0.1"
+```
+
 - 扩展目录名必须遵循 `<publisher>.<name>-<version>` 约定（此处为 `local.opencode-bridge-0.0.1`），否则 VS Code 不会将其识别为扩展。
 - 安装后执行 `code --list-extensions` 应列出 `local.opencode-bridge`。
 
-### 2. 安装 TUI 插件（junction + cli.json）
+### 2. 安装 TUI 插件（同一仓库目录挂载到 opencode 插件目录）
 
-直连注入需要配套插件。同样用 junction 暴露给 opencode 全局配置目录（同样在仓库根目录执行）：
+直连注入需要配套插件。这里同样使用目录链接/符号链接把 `tui-plugin/` 挂到 opencode 的插件目录。
+
+#### Windows
 
 ```cmd
 mklink /J "%USERPROFILE%\.config\opencode\plugins\tui-append-http" "%CD%\tui-plugin"
 ```
 
-再把它登记进全局 CLI 配置 `%USERPROFILE%\.config\opencode\cli.json` 的 `plugins` 数组（追加一项即可，其余条目保持不变）：
+#### macOS / Linux
+
+```bash
+mkdir -p "$HOME/.config/opencode/plugins"
+ln -sfn "$(pwd)/tui-plugin" "$HOME/.config/opencode/plugins/tui-append-http"
+```
+
+再把它登记进全局 CLI 配置：
+
+- Windows: `%USERPROFILE%\.config\opencode\cli.json`
+- macOS / Linux: `$HOME/.config/opencode/cli.json`
+
+在 `plugins` 数组中追加一项：
 
 ```json
 "plugins": [
@@ -126,6 +179,8 @@ mklink /J "%USERPROFILE%\.config\opencode\plugins\tui-append-http" "%CD%\tui-plu
 - 相对路径基于 `cli.json` 所在目录。
 - 插件加载成功时 TUI 会弹出 toast：`append-http / listening on 127.0.0.1:<port>`；若指向的目录内没有 tui 入口也会弹 toast，便于排查。
 - 自动发现与 `plugins` 登记按 href 去重，不会重复加载。
+
+> 说明：Windows 使用 `mklink /J`（junction）；macOS / Linux 使用 `ln -sfn`。其目的相同：让 opencode 与 VS Code 直接读到本仓库中的真实源码和构建产物，而不需要复制一份副本。
 
 ### 3. 注册 MCP 服务器（opencode.json）
 
