@@ -1,9 +1,22 @@
 node_modules/
+.npm/
+.vscode/
+.idea/
 *.log
+*.pid
+*.seed
+*.tgz
 .DS_Store
 Thumbs.db
+
+# Environment files
+.env
+.env.*
 
 # TypeScript build output (compiled from extension/src/ by `npm run build`)
 /extension/extension.js
 /extension/mcp-shim.js
 *.tsbuildinfo
+
+# Test / coverage output
+coverage/
